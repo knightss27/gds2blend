@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>gds2blend Config Editor</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">gds2blend <span>config editor</span></div>
+    <div class="group">
+      <span id="project-name" class="project-name" title="Project file">Untitled project</span>
+      <span id="dirty-dot" class="dirty-dot" title="Unsaved changes" hidden>●</span>
+      <button id="proj-open">Open…</button>
+      <button id="proj-save" title="Save project (⌘S)">Save</button>
+      <button id="proj-saveas">Save as…</button>
+    </div>
+    <div class="group">
+      <button id="undo-btn" title="Undo (⌘Z)" disabled>↶</button>
+      <button id="redo-btn" title="Redo (⇧⌘Z)" disabled>↷</button>
+    </div>
+    <div class="group">
+      <select id="gds-select" title="GDS files in the project folder"></select>
+      <button id="gds-open">Open</button>
+      <label class="button" title="Load a GDS from anywhere on disk">
+        Upload…<input id="gds-upload" type="file" accept=".gds,.gds2,.gdsii" hidden>
+      </label>
+    </div>
+    <div class="group">
+      <label class="inline">Preview
+        <select id="mask-size">
+          <option value="1024">1024 px</option>
+          <option value="2048" selected>2048 px</option>
+          <option value="4096">4096 px</option>
+        </select>
+      </label>
+    </div>
+    <div id="status" class="status"></div>
+    <div class="group right">
+      <button id="import-btn">Import YAML…</button>
+      <button id="export-btn" class="primary">Export YAML…</button>
+    </div>
+  </header>
+  <div id="notice" class="notice" hidden></div>
+
+  <main>
+    <section class="viewer">
+      <div class="viewer-tabs">
+        <button type="button" class="vtab active" data-pane="layout">Layout</button>
+        <button type="button" class="vtab" data-pane="render" id="render-tab">Render</button>
+        <span class="spacer"></span>
+        <label class="inline hint" title="Show the layout and the render next to each other">
+          <input type="checkbox" id="split-toggle"> Side by side</label>
+      </div>
+      <div class="viewer-body">
+        <aside id="stack-col" class="stack-col">
+          <div class="pane-title row-between">
+            <span>Layer stack</span>
+            <span class="seg">
+              <button type="button" id="stack-schematic" class="on" title="Every layer the same height, like a process diagram">Schematic</button>
+              <button type="button" id="stack-scale" title="Heights in proportion to thickness">To scale</button>
+            </span>
+          </div>
+          <div id="stack-scroll" class="stack-scroll">
+            <p id="stack-empty" class="hint">Checked layers with a z and height show up here.</p>
+            <svg id="stack-svg"></svg>
+          </div>
+        </aside>
+        <div id="stack-resizer" class="resizer" title="Drag to resize"></div>
+
+        <div id="panes" class="panes">
+          <div id="layout-pane" class="pane">
+          <div id="canvas-wrap" class="canvas-wrap">
+            <canvas id="view"></canvas>
+            <div id="empty" class="empty">
+              <p>Open a GDS file to start.</p>
+              <p class="hint">Pick one from the project folder above, or upload one.</p>
+            </div>
+            <div class="view-tools">
+              <label class="inline"><input type="checkbox" id="opt-glow" checked> Glow</label>
+              <label class="inline" title="Draw GDS layers that aren't in the stack in gray">
+                <input type="checkbox" id="opt-ghost" checked> Unused layers</label>
+              <label class="inline">Background <input type="color" id="opt-bg" value="#0a0b0d"></label>
+              <button id="fit-btn" title="Fit to view (or double-click the canvas)">Fit</button>
+              <label class="inline" title="What the camera sees when build_gds_scene.py frames the chip (straight down)">
+                <input type="checkbox" id="opt-camera" checked> Camera</label>
+          <label class="inline" title="Sun direction: drag the sun around to set where light comes from, toward the center to raise it">
+            <input type="checkbox" id="opt-sun" checked> Sun</label>
+              <button id="crop-btn" class="toggle" title="Draw the region build_gds_scene.py imports (CROP_REGION)">Crop</button>
+            </div>
+            <div class="view-badges">
+              <div id="crop-hint" class="badge" hidden>Drag to draw the crop · drag its edges to adjust · ⌥ turns off snapping · Space-drag pans · Esc when done</div>
+              <div id="detail-badge" class="badge busy" hidden>Loading detail…</div>
+            </div>
+            <div id="readout" class="readout"></div>
+            <div class="approx-note">Approximate preview: color, opacity and glow only. Metallic and roughness show up in the Blender render.</div>
+          </div>
+          </div>
+
+          <div id="render-pane" class="pane render-pane" hidden>
+            <div class="render-toolbar">
+              <button type="button" id="run-build" title="Import into Blender and save the .blend, without rendering">Build .blend</button>
+              <button type="button" id="run-quick" title="Half resolution, at most 32 samples: for checking framing and colors">Quick render</button>
+              <button type="button" id="run-final" class="primary" title="Full resolution and samples">Final render</button>
+              <span class="spacer"></span>
+              <button type="button" id="rs-toggle" class="toggle on">Settings</button>
+            </div>
+            <div id="run-msgs" class="msgs pad"></div>
+            <div class="render-main">
+              <div id="render-settings" class="render-settings">
+                <div class="row-between rs-head">
+                  <span class="hint">Values from build_gds_scene.py. Changed ones are marked and saved with the project.</span>
+                  <button type="button" id="rs-reset" title="Use the script's values again">Reset</button>
+                </div>
+                <div id="rs-fields"></div>
+              </div>
+              <div class="render-side">
+                <div id="run-detail" class="run-detail" hidden>
+                  <div class="row-between">
+                    <span id="run-summary" class="run-summary"></span>
+                    <span class="run-actions">
+                      <button type="button" id="run-cancel" hidden>Cancel</button>
+                      <button type="button" id="run-use" title="Load this run's render settings and crop into the project">Use these settings</button>
+                      <button type="button" id="run-open">Open in Blender</button>
+                    </span>
+                  </div>
+                  <div class="run-progress">
+                    <div id="run-bar" class="bar" hidden><span></span></div>
+                    <span id="run-phase" class="run-phase"></span>
+                  </div>
+                  <div id="run-warnings" class="msgs"></div>
+                </div>
+                <div id="render-view" class="render-view">
+                  <img id="render-img" alt="Rendered image" hidden draggable="false">
+                  <div id="render-empty" class="empty">
+                    <p>No render yet.</p>
+                    <p class="hint">Quick render checks framing and colors in seconds; Final render uses the full settings.</p>
+                  </div>
+                </div>
+                <div id="run-strip" class="run-strip"></div>
+                <details class="run-log">
+                  <summary>Log <span id="log-title" class="hint"></span></summary>
+                  <pre id="run-log"></pre>
+                </details>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <aside class="panel">
+      <details class="meta" id="meta">
+        <summary>Stack &amp; color scheme info</summary>
+        <div class="grid2">
+          <label>Stack name<input id="stack-name"></label>
+          <label>Default color (def_color)<input id="stack-defcolor"></label>
+          <label class="span2">Stack description<input id="stack-desc"></label>
+          <label>Color scheme name<input id="scheme-name"></label>
+          <label>Scheme description<input id="scheme-desc"></label>
+        </div>
+      </details>
+
+      <details class="meta" id="crop-section">
+        <summary>Crop region <span id="crop-summary" class="hint">whole chip</span></summary>
+        <div class="crop-body">
+          <p class="hint">Import only part of the chip. Values are in µm, measured from the layout's origin; x, y is the lower-left corner.</p>
+          <div class="crop-grid">
+            <label>x<input id="crop-x" type="number" step="any"></label>
+            <label>y<input id="crop-y" type="number" step="any"></label>
+            <label>Width<input id="crop-w" type="number" step="any" min="0.1"></label>
+            <label>Height<input id="crop-h" type="number" step="any" min="0.1"></label>
+          </div>
+          <div class="mat-actions">
+            <button id="crop-draw" class="toggle" type="button">Draw on canvas</button>
+            <button id="crop-zoom" type="button">Zoom to crop</button>
+            <button id="crop-clear" type="button">Clear</button>
+          </div>
+          <label class="inline"><input type="checkbox" id="opt-croponly"> Preview only the crop</label>
+          <div id="crop-totals" class="crop-totals"></div>
+          <div class="crop-line-row">
+            <code id="crop-line">CROP_REGION = None</code>
+            <button id="crop-copy" type="button">Copy</button>
+          </div>
+          <p class="hint">Paste this into build_gds_scene.py. It isn't part of the YAML files.</p>
+        </div>
+      </details>
+
+      <div class="pane-title row-between">
+        <span>Layers</span>
+        <span class="hint">check a layer to include it in the YAML</span>
+      </div>
+      <div id="layer-list" class="layer-list"></div>
+
+      <div class="pane-title row-between">
+        <span>Material</span>
+        <span id="mat-users" class="hint"></span>
+      </div>
+      <div id="mat-editor" class="mat-editor"></div>
+    </aside>
+  </main>
+
+  <dialog id="export-dlg">
+    <form method="dialog" class="dlg">
+      <h2>Export YAML</h2>
+      <div class="grid2">
+        <label>Layer stack file<input id="out-layers" value="custom_layers.yaml"></label>
+        <label>Colors file<input id="out-colors" value="custom_colors.yaml"></label>
+      </div>
+      <label class="inline" title="Write each material once under 'materials:' so layers using it share one Blender material">
+        <input type="checkbox" id="share-mats"> Share materials between layers in Blender</label>
+      <div id="export-msgs" class="msgs"></div>
+      <div class="tabs">
+        <button type="button" class="tab active" data-tab="layers">Layer stack</button>
+        <button type="button" class="tab" data-tab="colors">Colors</button>
+      </div>
+      <pre id="export-preview" class="preview"></pre>
+      <div class="dlg-actions">
+        <button type="button" id="download-btn">Download both</button>
+        <span class="spacer"></span>
+        <button value="cancel">Close</button>
+        <button type="button" id="write-btn" class="primary">Write to project folder</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="import-dlg">
+    <form method="dialog" class="dlg">
+      <h2>Import YAML</h2>
+      <p class="hint">Replaces the current names, stack and materials with the ones in these files.</p>
+      <div class="grid2">
+        <label>Layer stack file<select id="in-layers"></select></label>
+        <label>Colors file<select id="in-colors"></select></label>
+      </div>
+      <p class="hint">Or pick files from anywhere:</p>
+      <div class="grid2">
+        <label>Layer stack<input type="file" id="in-layers-file" accept=".yaml,.yml"></label>
+        <label>Colors<input type="file" id="in-colors-file" accept=".yaml,.yml"></label>
+      </div>
+      <div id="import-msgs" class="msgs"></div>
+      <div class="dlg-actions">
+        <span class="spacer"></span>
+        <button value="cancel">Cancel</button>
+        <button type="button" id="import-go" class="primary">Import</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="open-dlg">
+    <form method="dialog" class="dlg">
+      <h2>Open project</h2>
+      <label>Project files in the project folder<select id="open-select"></select></label>
+      <div id="open-msgs" class="msgs"></div>
+      <div class="dlg-actions">
+        <span class="spacer"></span>
+        <button value="cancel">Cancel</button>
+        <button type="button" id="open-go" class="primary">Open</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="saveas-dlg">
+    <form method="dialog" class="dlg">
+      <h2>Save project as</h2>
+      <label>File in the project folder<input id="saveas-path" spellcheck="false"></label>
+      <p class="hint">Saves layer names (including unchecked layers), shared materials, the GDS file,
+        export paths and preview settings. The YAML files are still made with Export YAML.</p>
+      <div id="saveas-msgs" class="msgs"></div>
+      <div class="dlg-actions">
+        <span class="spacer"></span>
+        <button value="cancel">Cancel</button>
+        <button type="button" id="saveas-go" class="primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="presets-dlg" class="wide">
+    <form method="dialog" class="dlg">
+      <div class="row-between">
+        <h2>Material presets</h2>
+        <input id="presets-search" type="search" placeholder="Search presets…" spellcheck="false">
+      </div>
+      <p id="presets-target" class="hint"></p>
+      <div id="presets-msgs" class="msgs"></div>
+      <div id="presets-body" class="presets-body"></div>
+      <details class="from-colors">
+        <summary>Add materials from a colors file</summary>
+        <p class="hint">Copies every material in another colors YAML into this project's material list. Your layers don't change.</p>
+        <div class="grid2">
+          <label>From the project folder<select id="mats-from-select"></select></label>
+          <label>Or pick a file<input type="file" id="mats-from-file" accept=".yaml,.yml"></label>
+        </div>
+        <div class="dlg-actions">
+          <span class="spacer"></span>
+          <button type="button" id="mats-from-go">Add materials</button>
+        </div>
+      </details>
+      <div class="dlg-actions">
+        <span class="spacer"></span>
+        <button value="cancel">Close</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="run-dlg">
+    <form method="dialog" class="dlg">
+      <h2 id="run-dlg-title">Run anyway?</h2>
+      <div id="run-dlg-list" class="msgs"></div>
+      <div class="dlg-actions">
+        <span class="spacer"></span>
+        <button value="cancel">Cancel</button>
+        <button value="go" class="primary">Run anyway</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>

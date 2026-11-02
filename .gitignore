@@ -1,0 +1,30 @@
+# Layouts, layer/color configs and editor project files are per-user data
+*.gds
+*.gds2
+*.gdsii
+*.yaml
+*.yml
+*.json
+# ...except the material presets the web UI ships with
+!webui/presets.yaml
+
+# Blender runs from the web UI (each in its own folder)
+renders/
+
+# Blender output and test renders (.blend files can be hundreds of MB)
+*.blend
+*.blend[0-9]*
+*.png
+*.jpg
+*.exr
+*.tif
+*.tiff
+output_tests/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store

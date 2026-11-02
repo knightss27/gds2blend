@@ -1,0 +1,85 @@
+# Starting points for materials in the web UI. Values are Principled BSDF
+# inputs, exactly as they go into the colors YAML (colors are linear RGB).
+# Add your own here; the UI reads this file on startup.
+
+SiN (glowing):
+  Base Color: [0.06, 0.28, 0.55, 1.0]
+  Metallic: 0.0
+  Roughness: 0.3
+  IOR: 2.0
+  Transmission Weight: 0.0
+  Alpha: 1.0
+  Emission Color: [0.06, 0.06, 1.0, 1.0]
+  Emission Strength: 20.0
+
+SiN:
+  Base Color: [0.06, 0.28, 0.55, 1.0]
+  Metallic: 0.0
+  Roughness: 0.3
+  IOR: 2.0
+  Transmission Weight: 0.0
+  Alpha: 1.0
+
+SiO2 (dark mirror):
+  Base Color: [0.03, 0.03, 0.03, 1.0]
+  Metallic: 1.0
+  Roughness: 0.2
+  IOR: 1.45
+  Transmission Weight: 0.0
+  Alpha: 1.0
+
+SiO2 (clear cladding):
+  Base Color: [0.9, 0.93, 0.95, 1.0]
+  Metallic: 0.0
+  Roughness: 0.05
+  IOR: 1.45
+  Transmission Weight: 1.0
+  Alpha: 1.0
+
+Si:
+  Base Color: [0.25, 0.27, 0.3, 1.0]
+  Metallic: 0.6
+  Roughness: 0.25
+  IOR: 3.48
+  Transmission Weight: 0.0
+  Alpha: 1.0
+
+LiNbO3:
+  Base Color: [0.82, 0.84, 0.92, 1.0]
+  Metallic: 0.2
+  Roughness: 0.25
+  IOR: 2.2
+  Transmission Weight: 0.0
+  Alpha: 0.85
+
+Gold:
+  Base Color: [0.92, 0.65, 0.25, 1.0]
+  Metallic: 1.0
+  Roughness: 0.25
+  IOR: 1.5
+  Transmission Weight: 0.0
+  Alpha: 1.0
+
+Aluminum:
+  Base Color: [0.91, 0.92, 0.92, 1.0]
+  Metallic: 1.0
+  Roughness: 0.3
+  IOR: 1.5
+  Transmission Weight: 0.0
+  Alpha: 1.0
+
+Heater (NiCr / TiN):
+  Base Color: [0.55, 0.5, 0.45, 1.0]
+  Metallic: 0.7
+  Roughness: 0.45
+  IOR: 1.5
+  Transmission Weight: 0.0
+  Alpha: 1.0
+
+Matte marker:
+  Base Color: [0.6, 0.6, 0.6, 1.0]
+  Metallic: 0.0
+  Roughness: 0.7
+  IOR: 1.5
+  Transmission Weight: 0.0
+  Alpha: 1.0
