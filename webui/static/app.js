@@ -2917,21 +2917,10 @@ async function init() {
   fillFileSelects();
   resetHistory();
 
-  // Start from the project's current config files, if there are any
-  const yamls = new Set(state.files.yaml);
-  if (yamls.has("custom_layers.yaml") && yamls.has("custom_colors.yaml")) {
-    try {
-      const { project } = await post("/api/import",
-        { layers_path: "custom_layers.yaml", colors_path: "custom_colors.yaml" });
-      applyProject(project);
-      status("Loaded custom_layers.yaml and custom_colors.yaml. Open a GDS file to preview.");
-    } catch (err) {
-      status(`Couldn't read the existing YAML files: ${err.message}`, "error");
-    }
-  } else {
-    renderAll();
-    status("Open a GDS file to start.");
-  }
+  // Start empty: opening a layout lists its layers unchecked and without
+  // materials. Existing YAML files or projects are loaded only when asked.
+  renderAll();
+  status("Open a GDS or OASIS file to start, or open a project or import YAML files.");
   offerRecovery();
 }
 

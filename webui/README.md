@@ -5,25 +5,20 @@ the two files `build_gds_scene.py` hands to the BlenderGDS add-on.
 
 ## Run
 
-From the project folder:
+Setup, starting the editor, and where layout and other files go are in the
+[top-level README](../README.md). In short, from the project folder:
 
 ```sh
-python3 -m venv .venv                       # once
-.venv/bin/pip install -r webui/requirements.txt   # once
 .venv/bin/python webui/server.py            # opens http://127.0.0.1:8000
 ```
 
-`--port 8001` picks another port; `--no-browser` skips opening a tab.
-The server only listens on localhost and only reads and writes files inside
-the project folder.
-
 ## Use
 
-1. On startup, any existing `custom_layers.yaml` and `custom_colors.yaml` in
-   the project folder are loaded.
+1. The editor starts empty. To continue earlier work, open a project
+   (**Open…**) or load existing YAML files with **Import YAML…**.
 2. Pick a GDS or OASIS (`.oas`) file from the project folder and click
    **Open**, or **Upload…** one from elsewhere. Every layer/datatype gets a
-   row in the layer list.
+   row in the layer list, unchecked and without a material.
 3. For each layer: check it to include it, give it a name, set `z` and `h`
    (height, in µm), and pick a material. The dropdown can also create a new
    material from a preset in `presets.yaml`.
