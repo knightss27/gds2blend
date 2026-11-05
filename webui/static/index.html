@@ -25,7 +25,7 @@
       <select id="gds-select" title="GDS files in the project folder"></select>
       <button id="gds-open">Open</button>
       <label class="button" title="Load a GDS from anywhere on disk">
-        Upload…<input id="gds-upload" type="file" accept=".gds,.gds2,.gdsii" hidden>
+        Upload…<input id="gds-upload" type="file" accept=".gds,.gds2,.gdsii,.oas,.oasis" hidden>
       </label>
     </div>
     <div class="group">
@@ -104,6 +104,8 @@
               <button type="button" id="run-build" title="Import into Blender and save the .blend, without rendering">Build .blend</button>
               <button type="button" id="run-quick" title="Half resolution, at most 32 samples: for checking framing and colors">Quick render</button>
               <button type="button" id="run-final" class="primary" title="Full resolution and samples">Final render</button>
+              <label class="inline reimport" title="Runs reuse the last import of the layout when only materials, lighting, camera or render settings changed. Check this to import it again anyway, e.g. after editing build_gds_scene.py's import code or updating the add-on.">
+                <input type="checkbox" id="run-reimport"> Re-import layout</label>
               <span class="spacer"></span>
               <button type="button" id="rs-toggle" class="toggle on">Settings</button>
             </div>

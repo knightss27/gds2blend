@@ -2,6 +2,8 @@
 *.gds
 *.gds2
 *.gdsii
+*.oas
+*.oasis
 *.yaml
 *.yml
 *.json

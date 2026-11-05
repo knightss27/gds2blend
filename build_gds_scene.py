@@ -12,10 +12,10 @@ Rerun the script whenever the GDS or the settings change.
 
 IMPORTANT:
 This will most likely break if not take forever to run / eat up all your
-computer's RAM if you don't change your GDS file to have a smaller max cell
-vertices. In klayout, open and then do Save As and set a name. When you click 
-save it should prompt you with a new menu, in that menu change the max
-vertices to 50 or even smaller depending on size of the file.
+computer's RAM if the layout has polygons with lots of vertices.
+MAX_POLYGON_VERTICES below splits them before importing (the same as KLayout's
+Save As with a max vertex count); lower it, to 50 or even smaller, if a large
+file is still too slow.
 
 Custom layers and colors are dictated by the two .yaml files. To make or
 edit them with a preview of the layout, run the web UI (see webui/README.md):
@@ -26,7 +26,9 @@ edit them with a preview of the layout, run the web UI (see webui/README.md):
 import json
 import math
 import os
+import shutil
 import sys
+import tempfile
 import time
 
 import addon_utils
@@ -46,7 +48,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # ===========================================================================
 
 # --- Files -----------------------------------------------------------------
-GDS_FILE = "coilsbs.gds"         # layout to import
+GDS_FILE = "coilsbs.gds"         # layout to import (.gds or .oas)
 OUTPUT_BLEND = "coil_test.blend"  # .blend written at the end (overwritten on each run)
 
 
@@ -82,6 +84,15 @@ Z_SCALE = 0.1
 # Union overlapping shapes on each layer before meshing. Leave on: it avoids
 # black rendering artifacts in Cycles from overlapping faces.
 MERGE_LAYERS = False
+
+# Split polygons into pieces of at most this many vertices before importing,
+# the same as KLayout's Save As with a max vertex count. Polygons with
+# thousands of vertices make the import very slow or run out of memory, and
+# OASIS files can't be saved with a limit, so this matters most for .oas.
+# It costs one extra read and write of the layout. Cropping and MERGE_LAYERS
+# join touching shapes again, so they can bring large polygons back.
+# None imports the file as it is.
+MAX_POLYGON_VERTICES = 50
 
 # Include metal dummy fill layers (only matters for PDKs that define them).
 # Usually off: fill adds a lot of geometry and visual clutter.
@@ -171,6 +182,13 @@ GLARE_STRENGTH = 0.5         # glow intensity (Blender 4.4+; older versions igno
 # END OF SETTINGS
 # ===========================================================================
 
+# The web UI sets these to skip the GDS import when only materials, lighting,
+# camera or render settings changed since an earlier build. The scene saved
+# right after that import is opened instead, its materials are rebuilt from
+# CUSTOM_COLOR_FILE, and everything below the import runs as usual.
+IMPORTED_SCENE = None        # .blend to start from instead of importing
+SAVE_IMPORTED_SCENE = None   # where to save the scene right after importing
+
 # The web UI runs this script as
 #     blender --background --python build_gds_scene.py -- --settings run.json
 # Values in that JSON file replace the settings above; anything it leaves out
@@ -205,9 +223,13 @@ out_path = resolve(OUTPUT_BLEND)
 if not os.path.isfile(gds_path):
     sys.exit(f"GDS file not found: {gds_path}")
 
-# Start from an empty scene. read_homefile (unlike read_factory_settings)
-# keeps your preferences, so the installed extension stays enabled.
-bpy.ops.wm.read_homefile(use_empty=True)
+if IMPORTED_SCENE:
+    bpy.ops.wm.open_mainfile(filepath=IMPORTED_SCENE, load_ui=False)
+    print(f"Opened imported scene {IMPORTED_SCENE} instead of importing the GDS again")
+else:
+    # Start from an empty scene. read_homefile (unlike read_factory_settings)
+    # keeps your preferences, so the installed extension stays enabled.
+    bpy.ops.wm.read_homefile(use_empty=True)
 
 
 def importer_registered():
@@ -228,53 +250,139 @@ if not importer_registered():
     sys.exit("GDSII Importer extension not found. Install it from Get Extensions first.")
 
 scene = bpy.context.scene
-
-# In the GUI, the "Select PDK" dialog stores the PDK choice in these scene
-# properties and then opens the importer, which reads them back from the scene.
-# Setting them here lets us call the importer directly and skip the dialog.
 use_custom = CUSTOM_LAYER_STACK is not None
-if use_custom:
-    if CUSTOM_COLOR_FILE is None:
-        sys.exit("CUSTOM_LAYER_STACK needs CUSTOM_COLOR_FILE set too")
-    scene.gdsii_use_custom_config = True
-    scene.gdsii_custom_config_path = resolve(CUSTOM_LAYER_STACK)
-    scene.gdsii_custom_color_path = resolve(CUSTOM_COLOR_FILE)
-    for p in (scene.gdsii_custom_config_path, scene.gdsii_custom_color_path):
-        if not os.path.isfile(p):
-            sys.exit(f"Custom config file not found: {p}")
-    # Note: the add-on still prints "Using PDK: <name>" in this mode; ignore it.
-    # Its "Layer stack config:" line shows the file actually used.
-    print(f"Using CUSTOM layer stack: {scene.gdsii_custom_config_path}")
-    print(f"Using CUSTOM colors:      {scene.gdsii_custom_color_path}")
+if use_custom and CUSTOM_COLOR_FILE is None:
+    sys.exit("CUSTOM_LAYER_STACK needs CUSTOM_COLOR_FILE set too")
+
+
+def import_layout():
+    # In the GUI, the "Select PDK" dialog stores the PDK choice in these scene
+    # properties and then opens the importer, which reads them back from the scene.
+    # Setting them here lets us call the importer directly and skip the dialog.
+    if use_custom:
+        scene.gdsii_use_custom_config = True
+        scene.gdsii_custom_config_path = resolve(CUSTOM_LAYER_STACK)
+        scene.gdsii_custom_color_path = resolve(CUSTOM_COLOR_FILE)
+        for p in (scene.gdsii_custom_config_path, scene.gdsii_custom_color_path):
+            if not os.path.isfile(p):
+                sys.exit(f"Custom config file not found: {p}")
+        # Note: the add-on still prints "Using PDK: <name>" in this mode; ignore it.
+        # Its "Layer stack config:" line shows the file actually used.
+        print(f"Using CUSTOM layer stack: {scene.gdsii_custom_config_path}")
+        print(f"Using CUSTOM colors:      {scene.gdsii_custom_color_path}")
+    else:
+        scene.gdsii_use_custom_config = False
+        scene.gdsii_pdk_selection = PDK
+
+    import_kwargs = dict(
+        filepath=gds_path,
+        unit_scale=UNIT_SCALE,
+        z_scale=Z_SCALE,
+        create_collection=True,   # layers go in a collection named after the GDS file
+        setup_scene=ADD_ON_SCENE_SETUP,
+        merge_layers=MERGE_LAYERS,
+        add_fill=INCLUDE_DUMMY_FILL,
+    )
+    if not use_custom:
+        import_kwargs["color_scheme"] = COLOR_SCHEME
+    if CROP_REGION is not None:
+        # The add-on reads the crop in Blender units (um only at UNIT_SCALE = 1e-6),
+        # so convert from um. Passing um at another scale crops far off the chip.
+        um_to_bu = 1e-6 / UNIT_SCALE
+        x, y, w, h = (v * um_to_bu for v in CROP_REGION)
+        # The add-on silently enlarges crops narrower than 0.1 Blender units
+        min_um = 0.1 / um_to_bu
+        if min(w, h) < 0.1:
+            sys.exit(f"CROP_REGION width and height must be at least {min_um:g} um at UNIT_SCALE = {UNIT_SCALE:g}")
+        import_kwargs.update(use_crop=True, crop_x=x, crop_y=y, crop_width=w, crop_height=h)
+
+    split_dir = None
+    if MAX_POLYGON_VERTICES:
+        from klayout import db  # bundled with the add-on
+
+        started = time.time()
+        layout = db.Layout()
+        layout.read(gds_path)  # GDS or OASIS
+        split_dir = tempfile.mkdtemp(prefix="gds2blend_")
+        # Keep the file's name: the add-on names the layer collection after it
+        stem = os.path.splitext(os.path.basename(gds_path))[0]
+        import_kwargs["filepath"] = os.path.join(split_dir, stem + ".gds")
+        options = db.SaveLayoutOptions()
+        options.format = "GDS2"
+        options.gds2_max_vertex_count = max(4, int(MAX_POLYGON_VERTICES))  # KLayout's minimum is 4
+        layout.write(import_kwargs["filepath"], options)
+        layout._destroy()
+        print(f"Split polygons to at most {options.gds2_max_vertex_count} vertices "
+              f"in {time.time() - started:.1f} s")
+
+    try:
+        result = bpy.ops.import_scene.gdsii(**import_kwargs)
+    finally:
+        if split_dir:
+            shutil.rmtree(split_dir, ignore_errors=True)
+    if "FINISHED" not in result:
+        sys.exit(f"GDS import failed ({result}); see the console output above.")
+
+
+def use_gpu():
+    """Turn on GPU rendering the way the add-on's scene setup does. The device
+    choice is a preference, not part of the .blend, so an opened scene needs it
+    again."""
+    prefs = bpy.context.preferences.addons["cycles"].preferences
+    for backend in ("OPTIX", "CUDA", "HIP", "METAL", "ONEAPI"):
+        try:
+            prefs.compute_device_type = backend
+            prefs.get_devices()
+            if any(d.type != "CPU" for d in prefs.devices):
+                for d in prefs.devices:
+                    d.use = True
+                print(f"Cycles GPU: {backend}")
+                return
+        except Exception:
+            continue
+    scene.cycles.device = "CPU"
+    print("Cycles GPU: no compatible device found, falling back to CPU")
+
+
+def rebuild_materials():
+    """Replace the layer materials in an opened scene with the ones in
+    CUSTOM_COLOR_FILE, built by the add-on's own code so they come out the
+    same as in a fresh import."""
+    import yaml  # bundled with the add-on
+
+    if not use_custom:
+        sys.exit("IMPORTED_SCENE needs CUSTOM_LAYER_STACK and CUSTOM_COLOR_FILE")
+    with open(resolve(CUSTOM_COLOR_FILE), encoding="utf-8") as f:
+        colors = yaml.safe_load(f) or {}
+    addon = next(m for name, m in sys.modules.items()
+                 if name.endswith(".import_gdsii") and hasattr(m, "create_material"))
+    objs = [o for o in scene.objects if o.type == "MESH" and o.name.startswith("L")]
+    for mat in {m for o in objs for m in o.data.materials if m}:
+        bpy.data.materials.remove(mat)
+    for obj in objs:
+        name = cfg_name = obj.name[1:]
+        cfg = colors.get("layers", {}).get(name, {})
+        if isinstance(cfg, str):  # a layer pointing to a shared material
+            cfg_name, cfg = cfg, colors.get("materials", {}).get(cfg, {})
+        mat = addon.create_material(cfg_name, cfg or {})
+        if obj.data.materials:
+            obj.data.materials[0] = mat
+        else:
+            obj.data.materials.append(mat)
+
+
+if IMPORTED_SCENE:
+    rebuild_materials()
+    if scene.render.engine == "CYCLES" and scene.cycles.device == "GPU":
+        use_gpu()
 else:
-    scene.gdsii_use_custom_config = False
-    scene.gdsii_pdk_selection = PDK
-
-import_kwargs = dict(
-    filepath=gds_path,
-    unit_scale=UNIT_SCALE,
-    z_scale=Z_SCALE,
-    create_collection=True,   # layers go in a collection named after the GDS file
-    setup_scene=ADD_ON_SCENE_SETUP,
-    merge_layers=MERGE_LAYERS,
-    add_fill=INCLUDE_DUMMY_FILL,
-)
-if not use_custom:
-    import_kwargs["color_scheme"] = COLOR_SCHEME
-if CROP_REGION is not None:
-    # The add-on reads the crop in Blender units (um only at UNIT_SCALE = 1e-6),
-    # so convert from um. Passing um at another scale crops far off the chip.
-    um_to_bu = 1e-6 / UNIT_SCALE
-    x, y, w, h = (v * um_to_bu for v in CROP_REGION)
-    # The add-on silently enlarges crops narrower than 0.1 Blender units
-    min_um = 0.1 / um_to_bu
-    if min(w, h) < 0.1:
-        sys.exit(f"CROP_REGION width and height must be at least {min_um:g} um at UNIT_SCALE = {UNIT_SCALE:g}")
-    import_kwargs.update(use_crop=True, crop_x=x, crop_y=y, crop_width=w, crop_height=h)
-
-result = bpy.ops.import_scene.gdsii(**import_kwargs)
-if "FINISHED" not in result:
-    sys.exit(f"GDS import failed ({result}); see the console output above.")
+    import_layout()
+    if SAVE_IMPORTED_SCENE:
+        # Before any of the changes below, so a later run can start from here
+        if os.path.exists(SAVE_IMPORTED_SCENE):
+            os.remove(SAVE_IMPORTED_SCENE)  # no .blend1 backup next to it
+        bpy.ops.wm.save_as_mainfile(filepath=SAVE_IMPORTED_SCENE, copy=True)
+        print(f"Kept the imported scene for later runs: {SAVE_IMPORTED_SCENE}")
 
 # Layer objects are named "L<LayerName>", their materials "<LayerName>"
 layer_objs = [o for o in scene.objects if o.type == "MESH" and o.name.startswith("L")]

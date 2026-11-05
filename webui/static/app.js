@@ -1091,7 +1091,7 @@ function renderLayerList() {
   list.replaceChildren();
   if (!state.project.layers.length) {
     list.append(el("div", { class: "hint", style: "padding: 8px 12px" },
-      "Open a GDS file or import YAML files to list layers."));
+      "Open a GDS or OASIS file, or import YAML files, to list layers."));
     return;
   }
   const stats = new Map((state.doc?.layers || []).map((g) => [`${g.layer}/${g.datatype}`, g]));
@@ -1151,11 +1151,11 @@ function renderLayerList() {
       const c = state.project.crop && state.cropStats?.get(gdsKey(layer));
       const shown = c || g;
       info = el("span", {}, c ? `${fmt(c.polygons)} of ${fmt(g.polygons)} polys in crop` : `${fmt(g.polygons)} polys`);
-      if (shown.vertex_warning) {
+      if (shown.vertex_warning && !(splitsPolygons() && !c)) {
         info = [info, el("span", {
           class: "warn",
-          title: (c ? "After cropping (which merges touching shapes), this layer has polygons this big. " : "") +
-            "Polygons this big make the Blender import slow or crash. Re-save the GDS in KLayout with a lower max vertex count (see build_gds_scene.py).",
+          title: c ? "After cropping (which merges touching shapes), this layer has polygons this big. Polygons this big make the Blender import slow or crash."
+            : "Polygons this big make the Blender import slow or crash. Turn on \"Split polygons\" in the Render settings, or re-save the GDS in KLayout with a lower max vertex count.",
         }, `⚠ max ${fmt(shown.max_vertices)} pts`)];
       }
     }
@@ -1741,6 +1741,7 @@ const RENDER_GROUPS = [
     ["UNIT_SCALE", "Unit scale", "number"],
     ["Z_SCALE", "Z scale", "number"],
     ["MERGE_LAYERS", "Merge overlapping shapes", "bool"],
+    ["MAX_POLYGON_VERTICES", "Split polygons to max vertices", "optnumber", 50],
     ["ADD_ON_SCENE_SETUP", "Add-on scene setup", "bool"],
     ["CHIP_BASE_Z", "Move chip base to z (µm)", "optnumber", -0.05],
     ["HIDE_LAYERS", "Hide layers", "layers"],
@@ -1777,6 +1778,9 @@ const RENDER_GROUPS = [
 ];
 
 const scriptSetting = (key) => state.renderInfo?.settings[key];
+// The script splits large polygons before importing unless MERGE_LAYERS joins
+// them again (cropping does too, but crop stats already count merged shapes)
+const splitsPolygons = () => !!renderValue("MAX_POLYGON_VERTICES") && !renderValue("MERGE_LAYERS");
 
 function renderValue(key) {
   const r = state.project.render || {};
@@ -1791,6 +1795,7 @@ function setRenderValue(key, value) {
   markDirty();
   renderStack();
   draw();  // camera framing
+  if (key === "MAX_POLYGON_VERTICES" || key === "MERGE_LAYERS") renderLayerList();  // vertex warnings
   for (const row of document.querySelectorAll(`.rs-field[data-key="${key}"]`)) {
     row.classList.toggle("changed", !same);
   }
@@ -2077,7 +2082,7 @@ function preflight() {
   for (const l of included) {
     if (hidden.has(l.name)) continue;
     const s = (c && state.cropStats?.get(gdsKey(l))) || stats.get(gdsKey(l));
-    if (s?.vertex_warning) {
+    if (s?.vertex_warning && !(splitsPolygons() && !c)) {
       warnings.push(`${l.name} has polygons with up to ${fmt(s.max_vertices)} vertices${c ? " after cropping" : ""}. The import may be very slow or run out of memory.`);
     }
   }
@@ -2103,8 +2108,10 @@ async function startRun(mode) {
   try {
     const res = await post("/api/render/run", {
       project: projectPayload(), settings: runSettings(), mode, gds_path: state.gdsPath,
+      reimport: $("run-reimport").checked,
     });
     if (res.errors.length) return showMsgs($("run-msgs"), res.errors.map((e) => ["error", e]));
+    $("run-reimport").checked = false;  // one run imports again; later ones reuse that
     state.runs.unshift(res.run);
     state.viewRun = res.run.name;
     setPane("render");
@@ -2224,6 +2231,7 @@ function renderRunDetail() {
   const info = r.info || {};
   if (r.mode !== "build" && info.resolution) bits.push(`${info.resolution.join("×")} px`, `${info.samples} samples`);
   if (info.crop) bits.push(`crop ${fmtUm(info.crop.w)} × ${fmtUm(info.crop.h)} µm`);
+  if (info.reused_import !== undefined) bits.push(info.reused_import ? "reused earlier import" : "imported layout");
   if (r.started && r.finished) bits.push(`took ${durationText((new Date(r.finished) - new Date(r.started)) / 1000)}`);
   $("run-summary").textContent = bits.join(" · ");
   $("run-phase").textContent = runActive(r) ? r.phase : r.status === "failed" ? `Failed: ${r.error || ""}` : "";
@@ -2613,7 +2621,7 @@ function fillFileSelects() {
   };
   fill($("gds-select"), state.files.gds, state.gdsPath || state.files.gds[0]);
   $("gds-open").disabled = !state.files.gds.length;
-  if (!state.files.gds.length) $("gds-select").append(el("option", { value: "" }, "no .gds in project"));
+  if (!state.files.gds.length) $("gds-select").append(el("option", { value: "" }, "no .gds or .oas in project"));
   fill($("in-layers"), state.files.yaml, "custom_layers.yaml");
   fill($("in-colors"), state.files.yaml, "custom_colors.yaml");
   fill($("mats-from-select"), state.files.yaml, "custom_colors.yaml");
@@ -2901,6 +2909,7 @@ async function init() {
   }
   try {
     state.renderInfo = await api("/api/render/info");
+    renderLayerList();  // vertex warnings depend on MAX_POLYGON_VERTICES
   } catch (err) {
     showMsgs($("run-msgs"), [["error", `Can't build from the UI: ${err.message}`]]);
   }

@@ -34,11 +34,17 @@ WEBUI_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = WEBUI_DIR.parent
 SKIP_DIRS = {".venv", "webui", ".git", "__pycache__", "renders"}
 PROJECT_EXT = ".gds2blend.json"
+LAYOUT_EXTS = (".gds", ".gds2", ".gdsii", ".oas", ".oasis")
 BUILD_SCRIPT = PROJECT_DIR / "build_gds_scene.py"
 RENDERS_DIR = PROJECT_DIR / "renders"
 # run.json settings the server fills in for every run; the UI doesn't set them
 RUN_FIXED = {"GDS_FILE", "OUTPUT_BLEND", "RENDER_IMAGE", "CUSTOM_LAYER_STACK",
-             "CUSTOM_COLOR_FILE", "MATERIAL_OVERRIDES", "CROP_REGION", "PDK", "COLOR_SCHEME"}
+             "CUSTOM_COLOR_FILE", "MATERIAL_OVERRIDES", "CROP_REGION", "PDK", "COLOR_SCHEME",
+             "IMPORTED_SCENE", "SAVE_IMPORTED_SCENE"}
+# Changing any of these (or the layout file or layer stack) means importing
+# the layout again; other settings can be applied to an earlier import
+IMPORT_SETTINGS = ("GDS_FILE", "UNIT_SCALE", "Z_SCALE", "MERGE_LAYERS", "INCLUDE_DUMMY_FILL",
+                   "ADD_ON_SCENE_SETUP", "MAX_POLYGON_VERTICES", "CROP_REGION")
 USER_PRESETS = WEBUI_DIR / "user_presets.yaml"
 USER_PRESETS_HEADER = (
     "# Material presets saved from the web UI (\"Save as preset\").\n"
@@ -87,14 +93,14 @@ def _load_gds(path, name):
 
 @app.get("/api/files")
 def list_files():
-    """GDS, YAML and project files in the project folder (two levels deep)."""
+    """Layout (GDS/OASIS), YAML and project files in the project folder (two levels deep)."""
     found = {"gds": [], "yaml": [], "projects": []}
     for root, dirs, files in os.walk(PROJECT_DIR):
         rel_root = Path(root).relative_to(PROJECT_DIR)
         dirs[:] = [d for d in dirs if d not in SKIP_DIRS and len(rel_root.parts) < 2]
         for f in sorted(files):
             ext = Path(f).suffix.lower()
-            key = "gds" if ext in (".gds", ".gds2", ".gdsii") else \
+            key = "gds" if ext in LAYOUT_EXTS else \
                   "yaml" if ext in (".yaml", ".yml") else \
                   "projects" if f.lower().endswith(PROJECT_EXT) else None
             if key:
@@ -112,7 +118,8 @@ def open_gds(path: str = Body(..., embed=True)):
 
 @app.post("/api/gds/upload")
 async def upload_gds(file: UploadFile = File(...)):
-    with tempfile.NamedTemporaryFile(suffix=".gds", delete=False) as tmp:
+    with tempfile.NamedTemporaryFile(suffix=Path(file.filename or "").suffix or ".gds",
+                                     delete=False) as tmp:
         tmp.write(await file.read())
     try:
         return _load_gds(tmp.name, file.filename)
@@ -391,9 +398,11 @@ def render_info():
 
 @app.post("/api/render/run")
 def start_run(project: dict = Body(...), settings: dict = Body(...),
-              mode: str = Body(...), gds_path: str = Body(None)):
+              mode: str = Body(...), gds_path: str = Body(None), reimport: bool = Body(False)):
     """Write the YAML files and run.json into a new folder under renders/ and
-    queue the build. Returns {"errors"} instead if the project can't be built."""
+    queue the build. Returns {"errors"} instead if the project can't be built.
+    The layout is only imported again if something that affects the geometry
+    changed since the last import, or if `reimport` is set."""
     if mode not in ("build", "quick", "final"):
         raise HTTPException(400, f"Unknown run mode {mode!r}.")
     errors, _ = validate(project)
@@ -435,7 +444,12 @@ def start_run(project: dict = Body(...), settings: dict = Body(...),
     included = [l["name"] for l in project["layers"] if l.get("include")]
     info = {"gds": gds_path, "layers": included, "crop": crop, "settings": settings,
             "resolution": run_settings.get("RESOLUTION"), "samples": run_settings.get("CYCLES_SAMPLES")}
-    run = runs.start(folder, mode, run_settings, len(included), info)
+    gds_stat = _project_path(gds_path).stat()
+    import_inputs = {k: run_settings.get(k, known.get(k, {}).get("value")) for k in IMPORT_SETTINGS}
+    import_inputs.update(gds_size=gds_stat.st_size, gds_mtime=gds_stat.st_mtime_ns,
+                         layer_stack=layers_yaml)
+    run = runs.start(folder, mode, run_settings, len(included), info,
+                     import_inputs=import_inputs, reimport=reimport)
     return {"errors": [], "run": run.summary()}
 
 

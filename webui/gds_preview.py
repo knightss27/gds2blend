@@ -28,12 +28,19 @@ REGION_CACHE = 64
 MAX_MERGE_POLYGONS = 3000
 
 
+def read_layout(path):
+    """Read a GDS or OASIS file, telling them apart by content, not extension."""
+    with open(path, "rb") as f:
+        is_oasis = f.read(13) == b"%SEMI-OASIS\r\n"
+    return gdstk.read_oas(path) if is_oasis else gdstk.read_gds(path)
+
+
 class GdsDoc:
     def __init__(self, path, name):
         with open(path, "rb") as f:
             self.id = hashlib.sha1(f.read()).hexdigest()[:12]
         self.name = name
-        lib = gdstk.read_gds(path)
+        lib = read_layout(path)
 
         # KLayout writes a "$$$CONTEXT_INFO$$$" cell for its own metadata;
         # it holds no geometry and the importer ignores it too

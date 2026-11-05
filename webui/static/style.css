@@ -171,6 +171,7 @@ main { flex: 1; display: flex; min-height: 0; }
   border-bottom: 1px solid var(--line); background: var(--panel);
 }
 .render-toolbar button.toggle.on { background: var(--accent-2); border-color: var(--accent-2); }
+.render-toolbar label.reimport { display: flex; margin-left: 6px; font-size: 12px; white-space: nowrap; }
 .msgs.pad { padding: 8px 10px 0; }
 .render-main { flex: 1; display: flex; min-height: 0; }
 .render-settings {

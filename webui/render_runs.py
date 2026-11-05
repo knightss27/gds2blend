@@ -4,8 +4,15 @@ Run build_gds_scene.py in Blender for the web UI.
 Each run gets its own folder under renders/ holding the YAML files it was
 built from, the settings file it ran with (run.json), the log, the .blend and
 the rendered image. Runs go one at a time; extra ones wait in a queue.
+
+Importing the layout is usually the slow part, so a run that imports also
+saves the scene right after the import in renders/_imported_scenes/. A later
+run whose import inputs (layout file, layer stack, import settings) are the
+same opens that scene instead and only redoes materials, lighting, camera and
+render settings.
 """
 import ast
+import hashlib
 import io
 import json
 import os
@@ -21,6 +28,8 @@ from PIL import Image
 
 QUICK_MAX_SAMPLES = 32  # quick renders: at most this many samples, half resolution
 THUMB_WIDTH = 360
+IMPORT_CACHE = "_imported_scenes"
+IMPORT_CACHE_SIZE = 2  # imported scenes kept; each can be as big as the .blend
 
 
 # --- The script's settings ----------------------------------------------------
@@ -129,6 +138,8 @@ class Run:
         self.layers_done = 0
         self.proc = None
         self.cancelled = False
+        self.import_key = None
+        self.reimport = False
 
     @property
     def renders(self):
@@ -166,6 +177,8 @@ class Run:
                       f"Importing layers ({self.layers_done}/{n})")
         elif line.startswith(("Cropping to region", "Starting GDS import")):
             self._set(0.05, "Importing layers")
+        elif line.startswith("Opened imported scene"):
+            self._set(import_end / 2, "Applying settings to the earlier import")
         elif line.startswith("Saved "):
             self._set(import_end, "Saved the .blend")
         elif line.startswith("Rendering "):
@@ -205,10 +218,16 @@ class RunManager:
         folder.mkdir()
         return folder
 
-    def start(self, folder, mode, settings, layer_count, info):
-        """Queue a run. `settings` is the run.json content."""
+    def start(self, folder, mode, settings, layer_count, info, import_inputs=None, reimport=False):
+        """Queue a run. `settings` is the run.json content. Runs with the same
+        `import_inputs` (anything JSON-serializable) can share one import;
+        `reimport` imports again anyway."""
         (folder / "run.json").write_text(json.dumps(settings, indent=2), encoding="utf-8")
         run = Run(folder, mode, layer_count, info)
+        if import_inputs is not None:
+            run.import_key = hashlib.sha1(
+                json.dumps(import_inputs, sort_keys=True).encode()).hexdigest()[:16]
+        run.reimport = reimport
         run.save_meta()
         with self.lock:
             self.runs[run.name] = run
@@ -227,8 +246,33 @@ class RunManager:
                 run = self.queue.pop(0)
             self._execute(run)
 
+    def _choose_import(self, run):
+        """Start from an earlier import with the same inputs, or keep this
+        run's import for later. Decided here rather than when queuing, so a
+        run queued behind the one that imports can use its import."""
+        if run.import_key is None:
+            return
+        cache = self.dir / IMPORT_CACHE
+        saved = cache / f"{run.import_key}.blend"
+        settings_file = run.folder / "run.json"
+        settings = json.loads(settings_file.read_text(encoding="utf-8"))
+        if saved.is_file() and not run.reimport:
+            settings["IMPORTED_SCENE"] = str(saved)
+            os.utime(saved)  # mark as recently used
+            run.info["reused_import"] = True
+        else:
+            cache.mkdir(exist_ok=True)
+            older = sorted((p for p in cache.glob("*.blend") if p != saved),
+                           key=lambda p: p.stat().st_mtime)
+            for p in older[:max(0, len(older) - (IMPORT_CACHE_SIZE - 1))]:
+                p.unlink(missing_ok=True)
+            settings["SAVE_IMPORTED_SCENE"] = str(saved)
+            run.info["reused_import"] = False
+        settings_file.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+
     def _execute(self, run):
         blender = find_blender()
+        self._choose_import(run)
         run.status = "running"
         run.started = datetime.now().isoformat(timespec="seconds")
         run._set(0.01, "Starting Blender")
@@ -261,9 +305,14 @@ class RunManager:
             if run.renders:
                 self._thumbnail(run)
             return self._finish(run, "done", None)
-        # The last lines usually say what went wrong (sys.exit message or traceback)
-        tail = [l for l in run.lines if l.strip()][-1:] or [f"Blender exited with code {code}"]
-        return self._finish(run, "failed", tail[0])
+        # The last lines usually say what went wrong (sys.exit message or traceback).
+        # Blender's own failures (e.g. out of GPU memory) are logged as
+        # "... | ERROR <message>" or "Error: <message>", then help text and
+        # decoration like a lone "|", so take the first of those.
+        tail = [l.strip() for l in run.lines if any(c.isalnum() for c in l)][-10:]
+        errors = [l.split("| ERROR ", 1)[-1] for l in tail if l.startswith("Error:") or "| ERROR " in l]
+        error = errors[0] if errors else tail[-1] if tail else f"Blender exited with code {code}"
+        return self._finish(run, "failed", error)
 
     def _finish(self, run, status, error):
         run.status = status

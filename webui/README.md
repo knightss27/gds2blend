@@ -21,8 +21,9 @@ the project folder.
 
 1. On startup, any existing `custom_layers.yaml` and `custom_colors.yaml` in
    the project folder are loaded.
-2. Pick a GDS from the project folder and click **Open**, or **Upload…** one
-   from elsewhere. Every GDS layer/datatype gets a row in the layer list.
+2. Pick a GDS or OASIS (`.oas`) file from the project folder and click
+   **Open**, or **Upload…** one from elsewhere. Every layer/datatype gets a
+   row in the layer list.
 3. For each layer: check it to include it, give it a name, set `z` and `h`
    (height, in µm), and pick a material. The dropdown can also create a new
    material from a preset in `presets.yaml`.
@@ -99,6 +100,17 @@ Your YAML files and the script aren't changed.
   time; the tab title shows progress. Pick a run in the strip to see its image
   and log, **Use these settings** to load its settings and crop back, or
   **Open in Blender** to open its `.blend`.
+- Importing the layout is usually the slow part, so runs skip it when they
+  can. A run that imports also keeps the scene as it was right after the
+  import (in `renders/_imported_scenes/`, the last two imports). A later run
+  that changes only materials, lighting, camera, glow, hidden layers, chip base
+  height or render settings starts from that scene. It rebuilds the materials
+  and redoes the rest, with the same result as a fresh import. Changing the
+  layout file, the layer stack (checked layers, names, z, heights), the crop,
+  or unit scale, Z scale, merging, polygon splitting or scene setup imports
+  again. The run's summary says which happened. Check **Re-import layout** to
+  import again anyway, e.g. after editing the import part of
+  `build_gds_scene.py` or updating the add-on.
 - **Camera** on the Layout tab outlines what the camera will see, for a
   straight-down camera.
 - **Sun** on the Layout tab shows the sun's direction as a dial centered on
@@ -128,6 +140,11 @@ thicknesses. Click a layer to select it.
   Blender material.
 - Material settings the editor doesn't show, and extra stack keys such as
   `purpose`, are kept unchanged on export.
-- A ⚠ next to a layer means it has polygons with more than 1000 vertices.
-  Re-save the GDS in KLayout with a lower max vertex count before building
-  the scene (see `build_gds_scene.py`).
+- A ⚠ next to a layer means it has polygons with more than 1000 vertices that
+  will reach Blender. The script splits large polygons before importing
+  (**Split polygons to max vertices** in the Render settings, on at 50 by
+  default), so the ⚠ only shows when that's off, when **Merge overlapping
+  shapes** is on, or when a crop merges touching shapes back together.
+- OASIS files are usually much smaller than the same layout as GDS, but
+  KLayout can't limit their vertex count when saving. Leave the polygon split
+  on for them.
