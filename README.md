@@ -46,8 +46,9 @@ Stop it with Ctrl+C.
 
 A typical session:
 
-1. Put your layout file in the project folder (see below). If the editor is
-   already open, reload the page so the file shows up in the menu.
+1. Prepare your layout (see [Preparing your layout](#preparing-your-layout))
+   and put it in the project folder (see below). If the editor is already
+   open, reload the page so the file shows up in the menu.
 2. Pick it in the layout menu at the top and click **Open**. Every
    layer/datatype in the file gets a row, unchecked and without a material.
 3. Check the layers to build, give them names, heights and thicknesses, and
@@ -119,10 +120,32 @@ with exactly the same settings:
 blender --background --python build_gds_scene.py -- --settings renders/<run>/run.json
 ```
 
-## Large layouts
+## Preparing your layout
 
-Polygons with thousands of vertices make the import very slow or run out of
-memory. The script splits them before importing (`MAX_POLYGON_VERTICES`, 50
-by default; **Split polygons to max vertices** in the editor's Render
-settings). Very large scenes can also run out of GPU memory when rendering;
-render a crop (**Crop** on the Layout tab) or hide layers you don't need.
+A little preparation in KLayout before you start saves a lot of trouble later.
+
+> **Save GDS files with at most 50 vertices per polygon.** In KLayout, use
+> *File → Save As*, choose GDS2, and set the maximum vertex count to 50 or
+> less in the options that appear. Polygons with thousands of vertices make
+> the import very slow or run out of memory. The script also splits polygons
+> before importing (`MAX_POLYGON_VERTICES`, 50 by default; **Split polygons to
+> max vertices** in the editor's Render settings), but a file saved this way
+> imports faster and works even with that step off. OASIS files can't be
+> saved with a limit, so for those, leave the split on.
+
+> **Put everything you want drawn differently on its own layer.** Each
+> layer/datatype becomes one Blender object with one height, one thickness
+> and one material, and the editor can't tell shapes on the same layer apart.
+> For example, SiN that isn't a waveguide (logos, alignment markers, labels)
+> should be on a separate layer or datatype from the SiN waveguides, so it
+> can get its own material or be left out.
+
+> **Draw pockets as the material around them, not as the pockets.** Every
+> shape is extruded upward, so a layer can only add material. To get a layer
+> with pockets in it, draw the inverse: a rectangle the size of the die with
+> the pockets cut out. In KLayout, draw the die rectangle on a new layer and
+> subtract the pocket layer from it (*Edit → Layer → Boolean Operations*,
+> "A NOT B"). Shapes with holes import fine.
+
+Very large scenes can also run out of GPU memory when rendering. Render a
+crop (**Crop** on the Layout tab) or hide layers you don't need.
